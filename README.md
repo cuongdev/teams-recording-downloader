@@ -62,3 +62,14 @@ organization's policies. The per-person insights are heuristics / AI reflections
 
 No build step — plain JS. CI runs `node --check` on every script and validates
 `manifest.json`.
+
+## ⭐ Star this repo
+
+If it saved you time, drop a star — it helps others find it and tells me to keep improving it.
+
+[![GitHub stars](https://img.shields.io/github/stars/cuongdev/teams-recording-downloader?style=social)](https://github.com/cuongdev/teams-recording-downloader/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/cuongdev/teams-recording-downloader?style=social)](https://github.com/cuongdev/teams-recording-downloader/network/members)
+
+### Star history
+
+[![Star History Chart](https://api.star-history.com/svg?repos=cuongdev/teams-recording-downloader&type=Date)](https://star-history.com/#cuongdev/teams-recording-downloader&Date)
