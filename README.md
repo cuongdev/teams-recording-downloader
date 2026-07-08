@@ -4,6 +4,24 @@ A Chrome (Manifest V3) extension that downloads **Microsoft Teams / SharePoint
 Stream** meeting recordings and transcripts, and generates a **local meeting-insights
 dashboard** — entirely in the browser.
 
+## Screenshots
+
+Floating action buttons (bottom-right on any recording):
+
+![Action buttons](screenshots/buttons.png)
+
+Meeting-insights dashboard, opened in-page (Download HTML / Close in the top bar):
+
+![Meeting insights — overview](screenshots/overlay.png)
+
+The full dashboard — talk-time, engagement, per-person contribution scorecards,
+a participation timeline with a time axis, speaker interactions, and an
+exportable AI prompt:
+
+![Meeting insights — full dashboard](screenshots/dashboard.png)
+
+> Screenshots use synthetic sample data.
+
 ## Features
 
 - **Download recording** — grabs the DASH manifest + `x-spopactoken` from the
