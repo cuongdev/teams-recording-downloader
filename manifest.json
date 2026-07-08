@@ -1,0 +1,33 @@
+{
+   "action": {
+      "default_icon": {
+         "128": "icons/team_lit.png"
+      }
+   },
+   "content_scripts": [ {
+      "all_frames": true,
+      "js": [ "intercept.js" ],
+      "matches": [ "https://*.sharepoint.com/*", "https://teams.microsoft.com/*", "https://teams.cloud.microsoft/*" ],
+      "run_at": "document_start",
+      "world": "MAIN"
+   }, {
+      "all_frames": true,
+      "js": [ "content.js" ],
+      "matches": [ "https://*.sharepoint.com/*", "https://teams.microsoft.com/*", "https://teams.cloud.microsoft/*" ],
+      "run_at": "document_idle"
+   } ],
+   "description": "Download Microsoft Teams / SharePoint Stream meeting recordings and transcripts (VTT), plus a local meeting-insights dashboard — all in-browser.",
+   "host_permissions": [ "https://*.sharepoint.com/*", "https://*.svc.ms/*", "https://teams.microsoft.com/*", "https://teams.cloud.microsoft/*" ],
+   "icons": {
+      "128": "icons/team_unlit.png"
+   },
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5XQ973HmJFSNvChV5ALmPyYhCTxeB05bf8y0WP5vIFWNjxkEz3dmreMTHrBb0FuNoTWd1gb44ckkkCl0gUbS/FH9uYcl8G3oCBEpzhOy/e0qUbpuxCkl6gTrP0bEizKydH5G77/aP6I0zIyAIUNQlh9e+qZj1xXT7Aa6PVKdQAm49nbO79vNALVfC5MQLIQK/AHAwBBhJfrEmTM29L9gKGZwd6fiVFNQpnL9V6G67z9SfwyClgyhL/F3p2VgK2yZALyPDDUtJH2Aiuox9Gzf0dyMmhfthDMIM6nutznZQW0GX6oYFsgcZJRDM1P01DUSVTojQVbzOz68qM5N+XbmXwIDAQAB",
+   "manifest_version": 3,
+   "name": "Teams Recording Downloader",
+   "update_url": "https://clients2.google.com/service/update2/crx",
+   "version": "2.9",
+   "web_accessible_resources": [ {
+      "matches": [ "https://*.sharepoint.com/*", "https://teams.microsoft.com/*", "https://teams.cloud.microsoft/*" ],
+      "resources": [ "mux-worker.js" ]
+   } ]
+}
