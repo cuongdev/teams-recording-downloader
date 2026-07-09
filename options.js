@@ -17,13 +17,25 @@ function normalizeBaseUrl(url) {
 }
 
 async function load() {
-  const { aiProvider } = await chrome.storage.local.get('aiProvider');
+  const { aiProvider, aiApiKey } = await chrome.storage.local.get(['aiProvider', 'aiApiKey']);
   if (!aiProvider) return;
   $('baseUrl').value = aiProvider.baseUrl || '';
-  $('apiKey').value = aiProvider.apiKey || '';
+  $('apiKey').value = aiApiKey || '';
   $('model').value = aiProvider.model || '';
   $('budget').value = aiProvider.budget || 48000;
   if (aiProvider.connected) setStatus('Connected to ' + aiProvider.host, true);
+}
+
+// Accepts https origins, or http restricted to localhost / 127.0.0.1 (local
+// model servers like Ollama / LM Studio), matching optional_host_permissions.
+function isAllowedOrigin(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'https:') return true;
+    return u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1');
+  } catch (_) {
+    return false;
+  }
 }
 
 function readForm() {
@@ -37,7 +49,10 @@ function readForm() {
 
 async function save() {
   const cfg = readForm();
-  if (!cfg.host) return setStatus('Enter a valid https Base URL.', false);
+  if (!cfg.host) return setStatus('Enter a valid Base URL.', false);
+  if (!isAllowedOrigin(cfg.baseUrl)) {
+    return setStatus('Use an https URL (http is only allowed for localhost).', false);
+  }
   if (!cfg.apiKey) return setStatus('Enter an API key.', false);
   if (!cfg.model) return setStatus('Enter a model name.', false);
   let granted = true;
@@ -47,7 +62,16 @@ async function save() {
     return setStatus('Permission request failed: ' + e.message, false);
   }
   if (!granted) return setStatus('Host permission denied — cannot reach this endpoint.', false);
-  await chrome.storage.local.set({ aiProvider: { ...cfg, connected: true } });
+  // Re-prompt for consent whenever the provider's host changes (or is new) —
+  // the consent dialog names the host, so a stale consent must not carry over.
+  const { aiProvider: existing } = await chrome.storage.local.get('aiProvider');
+  if (!existing || existing.host !== cfg.host) {
+    await chrome.storage.local.remove('aiConsented');
+  }
+  await chrome.storage.local.set({
+    aiApiKey: cfg.apiKey,
+    aiProvider: { baseUrl: cfg.baseUrl, host: cfg.host, model: cfg.model, budget: cfg.budget, connected: true },
+  });
   setStatus('Saved and authorized for ' + cfg.host, true);
 }
 
@@ -77,7 +101,7 @@ async function disconnect() {
   if (aiProvider && aiProvider.host) {
     try { await chrome.permissions.remove({ origins: [aiProvider.host + '/*'] }); } catch (_) {}
   }
-  await chrome.storage.local.remove('aiProvider');
+  await chrome.storage.local.remove(['aiProvider', 'aiApiKey', 'aiConsented']);
   $('apiKey').value = '';
   setStatus('Disconnected. The Ask panel will use local search only.', true);
 }

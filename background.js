@@ -17,14 +17,15 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 async function handleChat(port, msg) {
-  let cfg;
+  let cfg, apiKey;
   try {
-    const store = await chrome.storage.local.get('aiProvider');
+    const store = await chrome.storage.local.get(['aiProvider', 'aiApiKey']);
     cfg = store.aiProvider;
+    apiKey = store.aiApiKey;
   } catch (e) {
     return post(port, { type: 'error', message: 'Could not read settings.' });
   }
-  if (!cfg || !cfg.connected) {
+  if (!cfg || !cfg.connected || !apiKey) {
     return post(port, { type: 'error', message: 'No provider connected. Open Settings to connect one.' });
   }
   const has = await chrome.permissions.contains({ origins: [cfg.host + '/*'] });
@@ -38,7 +39,7 @@ async function handleChat(port, msg) {
   try {
     resp = await fetch(cfg.baseUrl + '/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.apiKey },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
       body: JSON.stringify(body),
     });
   } catch (e) {
@@ -49,6 +50,10 @@ async function handleChat(port, msg) {
     const map = { 401: 'Check your API key.', 403: 'Check your API key.', 404: 'Check the model name and Base URL.', 400: 'Check the model name and Base URL.', 429: 'Provider rate-limited the request — try again.' };
     let detail = map[resp.status] || ('Provider returned HTTP ' + resp.status + '.');
     return post(port, { type: 'error', message: detail });
+  }
+
+  if (!resp.body) {
+    return post(port, { type: 'error', message: 'Provider returned an empty response.' });
   }
 
   // Stream the SSE body, decoding incrementally and forwarding tokens.

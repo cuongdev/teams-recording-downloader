@@ -960,8 +960,11 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
   // one is. The API key lives only in the options page + service worker.
   // ===========================================================================
   let askHost = null, askOpen = false, askCuesPromise = null;
+  let askStreaming = false; // true while a chat stream is in flight — blocks a second concurrent send
 
-  // Reads NON-SECRET config only. The API key is never read here.
+  // Reads NON-SECRET config only. The API key lives under its own storage key
+  // (aiApiKey) and is deliberately never read here — only in options.js and
+  // background.js.
   async function getProviderConfig() {
     try {
       const { aiProvider } = await chrome.storage.local.get('aiProvider');
@@ -1025,7 +1028,7 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     closeBtn.addEventListener('click', () => toggleAskPanel(false));
 
     askHost = host;
-    host._handles = { root, log, input, form, lock };
+    host._handles = { root, log, input, form, lock, sendBtn };
     return host._handles;
   }
 
@@ -1100,6 +1103,17 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     let port;
     try { port = chrome.runtime.connect({ name: 'chat' }); }
     catch (_) { bubble.className = 'ask-msg error'; bubble.textContent = 'Extension messaging unavailable — reload the page.'; return; }
+    askStreaming = true;
+    handles.sendBtn.disabled = true;
+    handles.input.disabled = true;
+    // Idempotent — 'done'/'error' call port.disconnect(), which also fires
+    // onDisconnect, so this must be safe to run more than once per stream.
+    function stopStreaming() {
+      if (!askStreaming) return;
+      askStreaming = false;
+      handles.sendBtn.disabled = false;
+      handles.input.disabled = false;
+    }
     port.onMessage.addListener((m) => {
       if (m.type === 'token') {
         if (!answer) bubble.textContent = '';
@@ -1108,13 +1122,18 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
       } else if (m.type === 'done') {
         askHistory.push({ role: 'user', content: question }, { role: 'assistant', content: answer });
         if (askHistory.length > 12) askHistory = askHistory.slice(-12);
+        stopStreaming();
         port.disconnect();
       } else if (m.type === 'error') {
         bubble.className = 'ask-msg error'; bubble.textContent = m.message;
+        stopStreaming();
         port.disconnect();
       }
     });
-    port.onDisconnect.addListener(() => { if (bubble.textContent === '…') { bubble.className = 'ask-msg error'; bubble.textContent = 'Connection closed.'; } });
+    port.onDisconnect.addListener(() => {
+      if (bubble.textContent === '…') { bubble.className = 'ask-msg error'; bubble.textContent = 'Connection closed.'; }
+      stopStreaming();
+    });
     port.postMessage({ question, contextText, history: askHistory });
   }
 
@@ -1159,6 +1178,7 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
       handles.form._wired = true;
       handles.form.addEventListener('submit', (e) => {
         e.preventDefault();
+        if (askStreaming) return;
         const q = handles.input.value.trim();
         if (!q) return;
         handles.input.value = '';
