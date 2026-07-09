@@ -989,6 +989,7 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
 .ask-hit:hover{background:#3a3a42}
 .ask-hit .m{color:#9ad0b0;font-size:12px}
 .ask-hit b{color:#ffe08a}
+.ask-ts{color:#9ad0b0;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .ask-cta{background:#2f6f4f;color:#fff;border:0;border-radius:8px;padding:9px 12px;cursor:pointer;font:600 13px "Segoe UI",system-ui,sans-serif;align-self:flex-start}
 .ask-form{display:flex;gap:8px;padding:12px 14px;border-top:1px solid #333;background:#2a2a30}
 .ask-form input{flex:1;background:#1f1f23;color:#eee;border:1px solid #444;border-radius:8px;padding:9px 11px;font:inherit}
@@ -1009,8 +1010,9 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     bar.className = 'ask-bar';
     const title = document.createElement('div'); title.className = 't'; title.textContent = '💬 Ask this meeting';
     const settingsBtn = document.createElement('button'); settingsBtn.textContent = '⚙︎';  settingsBtn.title = 'Provider settings';
+    const clearBtn = document.createElement('button'); clearBtn.textContent = '🗑'; clearBtn.title = 'Clear chat';
     const closeBtn = document.createElement('button'); closeBtn.textContent = '✕';
-    bar.appendChild(title); bar.appendChild(settingsBtn); bar.appendChild(closeBtn);
+    bar.appendChild(title); bar.appendChild(settingsBtn); bar.appendChild(clearBtn); bar.appendChild(closeBtn);
 
     const lock = document.createElement('div'); lock.className = 'ask-lock';
     const log = document.createElement('div'); log.className = 'ask-log';
@@ -1025,6 +1027,7 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     document.documentElement.appendChild(host);
 
     settingsBtn.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'openOptions' }));
+    clearBtn.addEventListener('click', () => clearAskChat());
     closeBtn.addEventListener('click', () => toggleAskPanel(false));
 
     askHost = host;
@@ -1042,11 +1045,54 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     return el;
   }
 
-  // Best-effort: scroll the live Teams transcript to a cue's position.
+  // Best-effort: seek the recording's <video> in this frame to `seconds` and
+  // play. Returns true if a video element was found. (The video may live in a
+  // different frame than the transcript; if so this no-ops — the transcript
+  // scroll below still runs, and we can add cross-frame seek if needed.)
+  function seekVideo(seconds) {
+    if (!isFinite(seconds) || seconds < 0) return false;
+    for (const v of document.querySelectorAll('video')) {
+      try {
+        v.currentTime = seconds;
+        if (v.paused && v.play) { const p = v.play(); if (p && p.catch) p.catch(() => {}); }
+        return true;
+      } catch (_) { /* try the next video element */ }
+    }
+    return false;
+  }
+
+  // Click a result/timestamp: move the video to that moment, and scroll the
+  // live transcript to it as a complement/fallback.
   function jumpToCue(cue) {
+    seekVideo(cue.start);
     const sub = document.querySelector('[id^="sub-entry-"][aria-posinset="' + cue.pos + '"]');
     const target = sub ? sub.closest('div[role="group"]') || sub : null;
     if (target && target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  // Turn [123s] / [12:34] / [1:02:03] timestamp citations in an assistant answer
+  // into clickable chips that seek the video. Rebuilds via DOM nodes only —
+  // never innerHTML, since the model output is untrusted.
+  const TS_RE = /\[(\d{1,2}:\d{2}(?::\d{2})?|\d+s)\]/g;
+  function tsToSeconds(tok) {
+    if (/s$/.test(tok)) return parseInt(tok, 10);
+    return tok.split(':').map((n) => parseInt(n, 10)).reduce((acc, n) => acc * 60 + n, 0);
+  }
+  function linkifyTimestamps(el, text) {
+    el.textContent = '';
+    let last = 0, m;
+    TS_RE.lastIndex = 0;
+    while ((m = TS_RE.exec(text))) {
+      if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const chip = document.createElement('span');
+      chip.className = 'ask-ts';
+      chip.textContent = m[0];
+      const secs = tsToSeconds(m[1]);
+      chip.addEventListener('click', () => seekVideo(secs));
+      el.appendChild(chip);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
   }
 
   function renderSearchResults(root, cues, query) {
@@ -1122,6 +1168,7 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
       } else if (m.type === 'done') {
         askHistory.push({ role: 'user', content: question }, { role: 'assistant', content: answer });
         if (askHistory.length > 12) askHistory = askHistory.slice(-12);
+        if (answer) linkifyTimestamps(bubble, answer);
         stopStreaming();
         port.disconnect();
       } else if (m.type === 'error') {
@@ -1152,6 +1199,27 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     streamAnswer(handles, cfg, query, cues);
   }
 
+  // The local-search intro line + "Connect a provider" CTA (shown when no
+  // provider is connected and the log is empty).
+  function showLocalIntro(handles) {
+    appendMsg(handles.root, 'system', 'No AI provider connected — running local keyword search. Connect one for full Q&A.');
+    const cta = document.createElement('button');
+    cta.className = 'ask-cta'; cta.textContent = 'Connect a provider';
+    cta.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'openOptions' }));
+    handles.log.appendChild(cta);
+  }
+
+  // Clear-chat button: empty the transcript of messages and reset history.
+  async function clearAskChat() {
+    const handles = askHost && askHost._handles;
+    if (!handles) return;
+    handles.log.textContent = '';
+    askHistory = [];
+    const cfg = await getProviderConfig();
+    if (!cfg) showLocalIntro(handles);
+    handles.input.focus();
+  }
+
   async function toggleAskPanel(force) {
     const open = typeof force === 'boolean' ? force : !askOpen;
     askOpen = open;
@@ -1166,13 +1234,7 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     } else {
       handles.input.placeholder = 'Search the transcript…';
       handles.lock.style.display = 'none';
-      if (!handles.log.childElementCount) {
-        appendMsg(handles.root, 'system', 'No AI provider connected — running local keyword search. Connect one for full Q&A.');
-        const cta = document.createElement('button');
-        cta.className = 'ask-cta'; cta.textContent = 'Connect a provider';
-        cta.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'openOptions' }));
-        handles.log.appendChild(cta);
-      }
+      if (!handles.log.childElementCount) showLocalIntro(handles);
     }
     if (!handles.form._wired) {
       handles.form._wired = true;
