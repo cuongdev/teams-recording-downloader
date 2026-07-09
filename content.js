@@ -1202,11 +1202,18 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
   // The local-search intro line + "Connect a provider" CTA (shown when no
   // provider is connected and the log is empty).
   function showLocalIntro(handles) {
-    appendMsg(handles.root, 'system', 'No AI provider connected — running local keyword search. Connect one for full Q&A.');
+    const msg = appendMsg(handles.root, 'system', 'No AI provider connected — running local keyword search. Connect one for full Q&A.');
+    msg.classList.add('ask-intro');
     const cta = document.createElement('button');
-    cta.className = 'ask-cta'; cta.textContent = 'Connect a provider';
+    cta.className = 'ask-cta ask-intro'; cta.textContent = 'Connect a provider';
     cta.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'openOptions' }));
     handles.log.appendChild(cta);
+  }
+
+  // Remove the local-search intro/CTA (used when a provider becomes connected,
+  // so a stale "No provider connected" line can't contradict the header).
+  function removeLocalIntro(handles) {
+    handles.log.querySelectorAll('.ask-intro').forEach((el) => el.remove());
   }
 
   // Clear-chat button: empty the transcript of messages and reset history.
@@ -1231,6 +1238,7 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
       handles.input.placeholder = 'Ask about this meeting…';
       handles.lock.style.display = 'block';
       handles.lock.textContent = '🔒 Connected — questions are sent to ' + cfg.host;
+      removeLocalIntro(handles);
     } else {
       handles.input.placeholder = 'Search the transcript…';
       handles.lock.style.display = 'none';
