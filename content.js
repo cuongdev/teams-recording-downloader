@@ -1252,17 +1252,27 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     handles.input.disabled = true;
     // Idempotent — 'done'/'error' call port.disconnect(), which also fires
     // onDisconnect, so this must be safe to run more than once per stream.
+    let rafId = 0;
     function stopStreaming() {
+      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
       if (!askStreaming) return;
       askStreaming = false;
       handles.sendBtn.disabled = false;
       handles.input.disabled = false;
     }
+    // Coalesce token updates into one paint per frame so fast token streams
+    // render smoothly instead of thrashing layout on every message.
+    function flushAnswer() {
+      rafId = 0;
+      if (settled) return;
+      const stick = handles.log.scrollHeight - handles.log.scrollTop - handles.log.clientHeight < 80;
+      bubble.textContent = answer;
+      if (stick) handles.log.scrollTop = handles.log.scrollHeight;
+    }
     port.onMessage.addListener((m) => {
       if (m.type === 'token') {
-        if (!answer) bubble.textContent = '';
-        answer += m.text; bubble.textContent = answer;
-        handles.log.scrollTop = handles.log.scrollHeight;
+        answer += m.text;
+        if (!rafId) rafId = requestAnimationFrame(flushAnswer);
       } else if (m.type === 'done') {
         settled = true;
         askHistory.push({ role: 'user', content: question }, { role: 'assistant', content: answer });
