@@ -13,7 +13,7 @@
       "world": "MAIN"
    }, {
       "all_frames": true,
-      "js": [ "content.js" ],
+      "js": [ "chat-lib.js", "content.js" ],
       "matches": [ "https://*.sharepoint.com/*", "https://teams.microsoft.com/*", "https://teams.cloud.microsoft/*" ],
       "run_at": "document_idle"
    } ],

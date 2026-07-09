@@ -955,9 +955,175 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
   }
 
   // ===========================================================================
+  // Ask panel — docked chat/search over the transcript. Local keyword search
+  // when no provider is configured; streamed Q&A via the service worker when
+  // one is. The API key lives only in the options page + service worker.
+  // ===========================================================================
+  let askHost = null, askOpen = false, askCuesPromise = null;
+
+  // Reads NON-SECRET config only. The API key is never read here.
+  async function getProviderConfig() {
+    try {
+      const { aiProvider } = await chrome.storage.local.get('aiProvider');
+      if (!aiProvider || !aiProvider.connected) return null;
+      return { connected: true, host: aiProvider.host, model: aiProvider.model, budget: aiProvider.budget || 48000 };
+    } catch (_) { return null; }
+  }
+
+  const ASK_CSS = `
+.ask-panel{position:fixed;top:0;right:0;bottom:0;width:380px;max-width:92vw;z-index:2147483647;background:#1f1f23;color:#eee;font:14px/1.5 "Segoe UI",system-ui,sans-serif;display:flex;flex-direction:column;box-shadow:-4px 0 18px rgba(0,0,0,.4)}
+.ask-bar{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid #333;background:#2a2a30}
+.ask-bar .t{font-weight:700;flex:1}
+.ask-bar button{background:#3a3a42;color:#eee;border:0;border-radius:6px;padding:6px 10px;cursor:pointer;font:600 13px "Segoe UI",system-ui,sans-serif}
+.ask-lock{font-size:12px;color:#9ad0b0;padding:6px 14px;border-bottom:1px solid #333;display:none}
+.ask-log{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.ask-msg{padding:8px 11px;border-radius:10px;max-width:92%;white-space:pre-wrap;word-wrap:break-word}
+.ask-msg.user{align-self:flex-end;background:#3b4a7a}
+.ask-msg.assistant{align-self:flex-start;background:#2f2f36}
+.ask-msg.error{align-self:flex-start;background:#5a2320;color:#ffd9d5}
+.ask-msg.system{align-self:center;background:transparent;color:#9a9aa2;font-size:12px;text-align:center}
+.ask-hit{background:#2f2f36;border-radius:8px;padding:8px 10px;cursor:pointer}
+.ask-hit:hover{background:#3a3a42}
+.ask-hit .m{color:#9ad0b0;font-size:12px}
+.ask-hit b{color:#ffe08a}
+.ask-cta{background:#2f6f4f;color:#fff;border:0;border-radius:8px;padding:9px 12px;cursor:pointer;font:600 13px "Segoe UI",system-ui,sans-serif;align-self:flex-start}
+.ask-form{display:flex;gap:8px;padding:12px 14px;border-top:1px solid #333;background:#2a2a30}
+.ask-form input{flex:1;background:#1f1f23;color:#eee;border:1px solid #444;border-radius:8px;padding:9px 11px;font:inherit}
+.ask-form button{background:#6264a7;color:#fff;border:0;border-radius:8px;padding:9px 14px;cursor:pointer;font:600 13px "Segoe UI",system-ui,sans-serif}`;
+
+  function ensureAskPanel() {
+    if (askHost) return askHost._handles;
+    const host = document.createElement('div');
+    const root = host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = ASK_CSS;
+    root.appendChild(style);
+
+    const panel = document.createElement('div');
+    panel.className = 'ask-panel';
+
+    const bar = document.createElement('div');
+    bar.className = 'ask-bar';
+    const title = document.createElement('div'); title.className = 't'; title.textContent = '💬 Ask this meeting';
+    const settingsBtn = document.createElement('button'); settingsBtn.textContent = '⚙︎';  settingsBtn.title = 'Provider settings';
+    const closeBtn = document.createElement('button'); closeBtn.textContent = '✕';
+    bar.appendChild(title); bar.appendChild(settingsBtn); bar.appendChild(closeBtn);
+
+    const lock = document.createElement('div'); lock.className = 'ask-lock';
+    const log = document.createElement('div'); log.className = 'ask-log';
+
+    const form = document.createElement('form'); form.className = 'ask-form';
+    const input = document.createElement('input'); input.type = 'text'; input.placeholder = 'Search the transcript…';
+    const sendBtn = document.createElement('button'); sendBtn.type = 'submit'; sendBtn.textContent = 'Send';
+    form.appendChild(input); form.appendChild(sendBtn);
+
+    panel.appendChild(bar); panel.appendChild(lock); panel.appendChild(log); panel.appendChild(form);
+    root.appendChild(panel);
+    document.documentElement.appendChild(host);
+
+    settingsBtn.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'openOptions' }));
+    closeBtn.addEventListener('click', () => toggleAskPanel(false));
+
+    askHost = host;
+    host._handles = { root, log, input, form, lock };
+    return host._handles;
+  }
+
+  function appendMsg(root, cls, text) {
+    const log = root.querySelector('.ask-log');
+    const el = document.createElement('div');
+    el.className = 'ask-msg ' + cls;
+    el.textContent = text;
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+    return el;
+  }
+
+  // Best-effort: scroll the live Teams transcript to a cue's position.
+  function jumpToCue(cue) {
+    const sub = document.querySelector('[id^="sub-entry-"][aria-posinset="' + cue.pos + '"]');
+    const target = sub ? sub.closest('div[role="group"]') || sub : null;
+    if (target && target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function renderSearchResults(root, cues, query) {
+    const log = root.querySelector('.ask-log');
+    const hits = ChatLib.searchCues(cues, query, 20);
+    if (!hits.length) { appendMsg(root, 'system', 'No transcript lines match “' + query + '”.'); return; }
+    const terms = ChatLib.tokenize(query);
+    for (const h of hits) {
+      const div = document.createElement('div');
+      div.className = 'ask-hit';
+      const meta = document.createElement('div'); meta.className = 'm';
+      meta.textContent = secToClock(h.cue.start) + ' · ' + (h.cue.speaker || 'Unknown');
+      const body = document.createElement('div');
+      // Highlight matched terms without raw innerHTML injection.
+      const words = String(h.cue.text).split(/(\s+)/);
+      for (const w of words) {
+        const bare = w.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (bare && terms.indexOf(bare) !== -1) { const b = document.createElement('b'); b.textContent = w; body.appendChild(b); }
+        else body.appendChild(document.createTextNode(w));
+      }
+      div.appendChild(meta); div.appendChild(body);
+      div.addEventListener('click', () => jumpToCue(h.cue));
+      log.appendChild(div);
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function loadAskCues() {
+    if (!askCuesPromise) askCuesPromise = getCues(() => {}, undefined).catch((e) => { askCuesPromise = null; throw e; });
+    return askCuesPromise;
+  }
+
+  async function handleAsk(handles, query) {
+    appendMsg(handles.root, 'user', query);
+    let cues;
+    try { cues = await loadAskCues(); }
+    catch (_) { appendMsg(handles.root, 'error', 'Could not read the transcript. Open the transcript panel (CC) first.'); return; }
+    // Task 5 adds the connected branch here. For now: always local search.
+    renderSearchResults(handles.root, cues, query);
+  }
+
+  async function toggleAskPanel(force) {
+    const open = typeof force === 'boolean' ? force : !askOpen;
+    askOpen = open;
+    if (!open) { if (askHost) askHost.style.display = 'none'; return; }
+    const handles = ensureAskPanel();
+    askHost.style.display = '';
+    const cfg = await getProviderConfig();
+    if (cfg) {
+      handles.input.placeholder = 'Ask about this meeting…';
+      handles.lock.style.display = 'block';
+      handles.lock.textContent = '🔒 Connected — questions are sent to ' + cfg.host;
+    } else {
+      handles.input.placeholder = 'Search the transcript…';
+      handles.lock.style.display = 'none';
+      if (!handles.log.childElementCount) {
+        appendMsg(handles.root, 'system', 'No AI provider connected — running local keyword search. Connect one for full Q&A.');
+        const cta = document.createElement('button');
+        cta.className = 'ask-cta'; cta.textContent = 'Connect a provider';
+        cta.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'openOptions' }));
+        handles.log.appendChild(cta);
+      }
+    }
+    if (!handles.form._wired) {
+      handles.form._wired = true;
+      handles.form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const q = handles.input.value.trim();
+        if (!q) return;
+        handles.input.value = '';
+        handleAsk(handles, q);
+      });
+    }
+    handles.input.focus();
+  }
+
+  // ===========================================================================
   // UI
   // ===========================================================================
-  let btn, transcriptBtn, insightsBtn, statusEl, wrapEl;
+  let btn, transcriptBtn, insightsBtn, askBtn, statusEl, wrapEl;
 
   // Inline SVG line icons (Feather-style), built via the DOM API rather than
   // innerHTML so Trusted Types CSP on Teams/SharePoint can't block them.
@@ -965,7 +1131,8 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
   const ICONS = {
     download: [['path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }], ['polyline', { points: '7 10 12 15 17 10' }], ['line', { x1: '12', y1: '15', x2: '12', y2: '3' }]],
     barChart: [['line', { x1: '18', y1: '20', x2: '18', y2: '10' }], ['line', { x1: '12', y1: '20', x2: '12', y2: '4' }], ['line', { x1: '6', y1: '20', x2: '6', y2: '14' }]],
-    cancel: [['line', { x1: '18', y1: '6', x2: '6', y2: '18' }], ['line', { x1: '6', y1: '6', x2: '18', y2: '18' }]]
+    cancel: [['line', { x1: '18', y1: '6', x2: '6', y2: '18' }], ['line', { x1: '6', y1: '6', x2: '18', y2: '18' }]],
+    chat: [['path', { d: 'M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z' }]]
   };
   function makeIcon(children) {
     const svg = document.createElementNS(SVGNS, 'svg');
@@ -1030,6 +1197,11 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     btn = makeToolButton(ICONS.download, 'Download recording', '#6264a7', 'Cancel recording');
     transcriptBtn = makeToolButton(ICONS.download, 'Download transcript', '#464775', 'Cancel transcript');
     insightsBtn = makeToolButton(ICONS.barChart, 'Meeting insights', '#2f6f4f', 'Cancel insights');
+    askBtn = makeToolButton(ICONS.chat, 'Ask this meeting', '#6264a7', 'Ask this meeting');
+    askBtn.addEventListener('click', () => {
+      if (!isTranscriptPanelPresent()) { setStatus('Open the transcript panel (Transcript / CC) first, then click again.'); return; }
+      toggleAskPanel();
+    });
     makeAction(btn, runVideoDownload, () => {
       if (videoManifestUrl) return true;
       setStatus('Play the recording for a few seconds first.'); return false;
@@ -1042,7 +1214,7 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
       if (isTranscriptPanelPresent()) return true;
       setStatus('Open the transcript panel (Transcript / CC) first, then click again.'); return false;
     });
-    wrap.appendChild(statusEl); wrap.appendChild(insightsBtn); wrap.appendChild(transcriptBtn); wrap.appendChild(btn);
+    wrap.appendChild(statusEl); wrap.appendChild(askBtn); wrap.appendChild(insightsBtn); wrap.appendChild(transcriptBtn); wrap.appendChild(btn);
     (document.body || document.documentElement).appendChild(wrap);
     wrapEl = wrap;
   }
@@ -1055,6 +1227,7 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     injectButton();
     transcriptBtn.style.display = 'inline-flex';
     insightsBtn.style.display = 'inline-flex';
+    askBtn.style.display = 'inline-flex';
     wrapEl.style.display = 'flex';
   }
   function hideButton() {
