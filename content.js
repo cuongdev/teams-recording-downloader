@@ -1076,13 +1076,61 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     return askCuesPromise;
   }
 
+  let askHistory = [];
+
+  // One-time consent before any transcript text leaves the browser.
+  async function askConsent(host) {
+    const { aiConsented } = await chrome.storage.local.get('aiConsented');
+    if (aiConsented) return true;
+    const ok = confirm(
+      'Send transcript to your AI provider?\n\n' +
+      'Your questions and meeting transcript text will be sent to the endpoint ' +
+      'you configured (' + host + '). Only continue if this endpoint is approved ' +
+      'by your organization for meeting content.'
+    );
+    if (ok) await chrome.storage.local.set({ aiConsented: true });
+    return ok;
+  }
+
+  function streamAnswer(handles, cfg, question, cues) {
+    const contextText = ChatLib.buildContext(cues, question, cfg.budget);
+    const bubble = appendMsg(handles.root, 'assistant', '');
+    bubble.textContent = '…';
+    let answer = '';
+    let port;
+    try { port = chrome.runtime.connect({ name: 'chat' }); }
+    catch (_) { bubble.className = 'ask-msg error'; bubble.textContent = 'Extension messaging unavailable — reload the page.'; return; }
+    port.onMessage.addListener((m) => {
+      if (m.type === 'token') {
+        if (!answer) bubble.textContent = '';
+        answer += m.text; bubble.textContent = answer;
+        handles.log.scrollTop = handles.log.scrollHeight;
+      } else if (m.type === 'done') {
+        askHistory.push({ role: 'user', content: question }, { role: 'assistant', content: answer });
+        if (askHistory.length > 12) askHistory = askHistory.slice(-12);
+        port.disconnect();
+      } else if (m.type === 'error') {
+        bubble.className = 'ask-msg error'; bubble.textContent = m.message;
+        port.disconnect();
+      }
+    });
+    port.onDisconnect.addListener(() => { if (bubble.textContent === '…') { bubble.className = 'ask-msg error'; bubble.textContent = 'Connection closed.'; } });
+    port.postMessage({ question, contextText, history: askHistory });
+  }
+
   async function handleAsk(handles, query) {
     appendMsg(handles.root, 'user', query);
     let cues;
     try { cues = await loadAskCues(); }
     catch (_) { appendMsg(handles.root, 'error', 'Could not read the transcript. Open the transcript panel (CC) first.'); return; }
-    // Task 5 adds the connected branch here. For now: always local search.
-    renderSearchResults(handles.root, cues, query);
+    const cfg = await getProviderConfig();
+    if (!cfg) { renderSearchResults(handles.root, cues, query); return; }
+    if (!(await askConsent(cfg.host))) {
+      appendMsg(handles.root, 'system', 'Cancelled — nothing was sent. Showing local search instead.');
+      renderSearchResults(handles.root, cues, query);
+      return;
+    }
+    streamAnswer(handles, cfg, query, cues);
   }
 
   async function toggleAskPanel(force) {

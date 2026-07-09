@@ -38,12 +38,30 @@ exportable AI prompt:
 
 All three actions run independently and can be cancelled mid-run.
 
+## Ask this meeting (BYO AI provider)
+
+A docked **💬 Ask** panel lets you question the transcript. With no provider
+connected it runs local keyword search only — no network calls. To get full
+conversational Q&A, connect your own OpenAI-compatible endpoint (Base URL +
+API key + model) from the extension's **Options** page; the key is stored in
+`chrome.storage.local` and used only by the background service worker —
+`content.js` never reads it.
+
+Before any transcript text leaves your browser, a one-time consent dialog
+names the exact endpoint host and asks you to confirm it's approved for
+meeting content. Answers then stream back token-by-token. Declining consent
+(or leaving no provider connected) falls back to local search — nothing is
+sent.
+
 ## Privacy
 
-Everything is computed **in your browser**. The extension makes no third-party
-network calls — it only talks to the same SharePoint/`svc.ms` hosts the player
-already uses. The qualitative (LLM) analyses are **not** sent anywhere; they are
-packaged as a prompt you copy into whatever AI tool you are permitted to use.
+Everything is computed **in your browser**. By default the extension makes no
+third-party network calls — it only talks to the same SharePoint/`svc.ms`
+hosts the player already uses. The qualitative (LLM) analyses are **not** sent
+anywhere; they are packaged as a prompt you copy into whatever AI tool you are
+permitted to use. The one exception is the opt-in **Ask this meeting** panel
+above: if you connect a provider and consent, your question and transcript
+text are sent only to the endpoint you configured.
 
 ## Install (unpacked)
 

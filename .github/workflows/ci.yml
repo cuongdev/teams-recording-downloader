@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build extension zip
-        run: zip -r extension.zip manifest.json content.js intercept.js mux-worker.js icons
+        run: zip -r extension.zip manifest.json content.js chat-lib.js background.js options.html options.js intercept.js mux-worker.js icons
 
       - uses: actions/upload-artifact@v4
         with:
