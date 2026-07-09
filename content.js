@@ -1070,27 +1070,24 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     if (target && target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  // Turn [123s] / [12:34] / [1:02:03] timestamp citations in an assistant answer
-  // into clickable chips that seek the video. Rebuilds via DOM nodes only —
-  // never innerHTML, since the model output is untrusted.
-  const TS_RE = /\[(\d{1,2}:\d{2}(?::\d{2})?|\d+s)\]/g;
-  function tsToSeconds(tok) {
-    if (/s$/.test(tok)) return parseInt(tok, 10);
-    return tok.split(':').map((n) => parseInt(n, 10)).reduce((acc, n) => acc * 60 + n, 0);
-  }
+  // Turn timestamp citations in an assistant answer — single [123s], ranges
+  // like [723s–765s], and clock forms [12:34] — into clickable chips that seek
+  // the video. Each chip shows the clock form (mm:ss / h:mm:ss), not raw
+  // seconds. Rebuilds via DOM nodes only — never innerHTML (model output is
+  // untrusted).
   function linkifyTimestamps(el, text) {
     el.textContent = '';
-    let last = 0, m;
-    TS_RE.lastIndex = 0;
-    while ((m = TS_RE.exec(text))) {
-      if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const marks = ChatLib.findTimestamps(text);
+    let last = 0;
+    for (const mk of marks) {
+      if (mk.index > last) el.appendChild(document.createTextNode(text.slice(last, mk.index)));
       const chip = document.createElement('span');
       chip.className = 'ask-ts';
-      chip.textContent = m[0];
-      const secs = tsToSeconds(m[1]);
-      chip.addEventListener('click', () => seekVideo(secs));
+      chip.textContent = secToClock(mk.seconds);
+      chip.title = 'Jump to ' + secToClock(mk.seconds);
+      chip.addEventListener('click', () => seekVideo(mk.seconds));
       el.appendChild(chip);
-      last = m.index + m[0].length;
+      last = mk.index + mk.length;
     }
     if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
   }

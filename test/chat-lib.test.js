@@ -127,3 +127,30 @@ test('parseModelList returns [] for malformed input', () => {
   assert.deepEqual(ChatLib.parseModelList({}), []);
   assert.deepEqual(ChatLib.parseModelList({ data: [{ name: 'no-id' }, 5, null] }), []);
 });
+
+test('findTimestamps handles a single [Ns] token', () => {
+  const r = ChatLib.findTimestamps('Vu Phan-Tuan [395s]: something');
+  assert.equal(r.length, 1);
+  assert.equal(r[0].seconds, 395);
+});
+
+test('findTimestamps returns both ends of a range like [723s–765s]', () => {
+  const r = ChatLib.findTimestamps('Cuong [723s–765s] said');
+  assert.deepEqual(r.map((x) => x.seconds), [723, 765]);
+});
+
+test('findTimestamps parses clock forms mm:ss and h:mm:ss', () => {
+  assert.deepEqual(ChatLib.findTimestamps('[12:34]').map((x) => x.seconds), [754]);
+  assert.deepEqual(ChatLib.findTimestamps('[1:02:03]').map((x) => x.seconds), [3723]);
+});
+
+test('findTimestamps does not match "24s" inside a word (24seconds)', () => {
+  assert.deepEqual(ChatLib.findTimestamps('about 24seconds later'), []);
+  assert.deepEqual(ChatLib.findTimestamps('wait 30s ok').map((x) => x.seconds), [30]);
+});
+
+test('findTimestamps reports correct index/length for slicing', () => {
+  const text = 'x [395s] y';
+  const r = ChatLib.findTimestamps(text);
+  assert.equal(text.substr(r[0].index, r[0].length), '395s');
+});

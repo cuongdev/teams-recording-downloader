@@ -124,5 +124,24 @@
     return [...new Set(ids)].sort();
   }
 
-  return { tokenize, searchCues, cuesToPlainText, buildContext, parseSSE, buildChatRequest, parseModelList };
+  // Find timestamp tokens in assistant text: "<n>s" (seconds) or a clock
+  // "mm:ss" / "h:mm:ss". Each endpoint of a range like "[723s–765s]" is
+  // returned separately so both ends can be made clickable. The (?![a-z]) guard
+  // stops "24s" matching inside a word like "24seconds". Returns in-order
+  // matches: {index, length, seconds}.
+  function findTimestamps(text) {
+    const re = /\d+s(?![a-z])|\d{1,2}:\d{2}(?::\d{2})?/gi;
+    const out = [];
+    let m;
+    while ((m = re.exec(String(text || '')))) {
+      const tok = m[0];
+      const seconds = /s$/i.test(tok)
+        ? parseInt(tok, 10)
+        : tok.split(':').map((n) => parseInt(n, 10)).reduce((acc, n) => acc * 60 + n, 0);
+      out.push({ index: m.index, length: tok.length, seconds });
+    }
+    return out;
+  }
+
+  return { tokenize, searchCues, cuesToPlainText, buildContext, parseSSE, buildChatRequest, parseModelList, findTimestamps };
 });
