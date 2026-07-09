@@ -993,7 +993,19 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
 .ask-cta{background:#2f6f4f;color:#fff;border:0;border-radius:8px;padding:9px 12px;cursor:pointer;font:600 13px "Segoe UI",system-ui,sans-serif;align-self:flex-start}
 .ask-form{display:flex;gap:8px;padding:12px 14px;border-top:1px solid #333;background:#2a2a30}
 .ask-form input{flex:1;background:#1f1f23;color:#eee;border:1px solid #444;border-radius:8px;padding:9px 11px;font:inherit}
-.ask-form button{background:#6264a7;color:#fff;border:0;border-radius:8px;padding:9px 14px;cursor:pointer;font:600 13px "Segoe UI",system-ui,sans-serif}`;
+.ask-form button{background:#6264a7;color:#fff;border:0;border-radius:8px;padding:9px 14px;cursor:pointer;font:600 13px "Segoe UI",system-ui,sans-serif}
+.ask-rich{white-space:normal}
+.ask-rich .ask-p{margin:8px 0}
+.ask-rich .ask-p:first-child{margin-top:0}
+.ask-rich .ask-p:last-child{margin-bottom:0}
+.ask-rich .ask-h{font-weight:700;margin:10px 0 4px}
+.ask-rich ul,.ask-rich ol{margin:6px 0;padding-left:22px}
+.ask-rich li{margin:3px 0}
+.ask-rich strong{font-weight:700}
+.ask-rich em{font-style:italic}
+.ask-rich code{background:#1a1a1e;border:1px solid #444;border-radius:4px;padding:1px 5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.ask-grip{position:absolute;left:0;top:0;bottom:0;width:7px;cursor:col-resize;background:transparent}
+.ask-grip:hover{background:#6264a7}`;
 
   function ensureAskPanel() {
     if (askHost) return askHost._handles;
@@ -1030,6 +1042,35 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     // submits the form.
     ['keydown', 'keyup', 'keypress'].forEach((evt) =>
       panel.addEventListener(evt, (e) => { e.stopPropagation(); }));
+
+    // Left-edge drag handle to resize the panel width (persisted per profile).
+    const grip = document.createElement('div'); grip.className = 'ask-grip';
+    panel.appendChild(grip);
+    let dragging = false;
+    grip.addEventListener('pointerdown', (e) => {
+      dragging = true;
+      try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+      e.preventDefault();
+    });
+    grip.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const w = Math.min(Math.max(window.innerWidth - e.clientX, 320), Math.floor(window.innerWidth * 0.95));
+      panel.style.width = w + 'px';
+    });
+    const endGripDrag = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      try { grip.releasePointerCapture(e.pointerId); } catch (_) {}
+      try { chrome.storage.local.set({ askPanelWidth: parseInt(panel.style.width, 10) || 380 }); } catch (_) {}
+    };
+    grip.addEventListener('pointerup', endGripDrag);
+    grip.addEventListener('pointercancel', endGripDrag);
+    try {
+      chrome.storage.local.get('askPanelWidth').then(({ askPanelWidth }) => {
+        if (askPanelWidth) panel.style.width = Math.min(Math.max(askPanelWidth, 320), Math.floor(window.innerWidth * 0.95)) + 'px';
+      }).catch(() => {});
+    } catch (_) {}
+
     root.appendChild(panel);
     document.documentElement.appendChild(host);
 
@@ -1077,26 +1118,76 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     if (target && target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  // Turn timestamp citations in an assistant answer — single [123s], ranges
-  // like [723s–765s], and clock forms [12:34] — into clickable chips that seek
-  // the video. Each chip shows the clock form (mm:ss / h:mm:ss), not raw
-  // seconds. Rebuilds via DOM nodes only — never innerHTML (model output is
-  // untrusted).
-  function linkifyTimestamps(el, text) {
-    el.textContent = '';
+  // Append a run of plain text to `parent`, turning timestamp citations —
+  // single [123s], each end of a range like [723s–765s], and clock forms
+  // [12:34] — into clickable chips that seek the video (shown as mm:ss / h:mm:ss).
+  function appendTextWithTimestamps(parent, text) {
     const marks = ChatLib.findTimestamps(text);
     let last = 0;
     for (const mk of marks) {
-      if (mk.index > last) el.appendChild(document.createTextNode(text.slice(last, mk.index)));
+      if (mk.index > last) parent.appendChild(document.createTextNode(text.slice(last, mk.index)));
       const chip = document.createElement('span');
       chip.className = 'ask-ts';
       chip.textContent = secToClock(mk.seconds);
       chip.title = 'Jump to ' + secToClock(mk.seconds);
       chip.addEventListener('click', () => seekVideo(mk.seconds));
-      el.appendChild(chip);
+      parent.appendChild(chip);
       last = mk.index + mk.length;
     }
-    if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+    if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+  }
+
+  // Inline Markdown: **bold**, _italic_, `code`, plus timestamp chips in the
+  // plain runs. Built with DOM nodes only (never innerHTML — model output is
+  // untrusted), so unmatched markers just render as literal text.
+  function appendInline(parent, text) {
+    const re = /\*\*([^*]+?)\*\*|`([^`]+?)`|_([^_]+?)_/g;
+    let last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) appendTextWithTimestamps(parent, text.slice(last, m.index));
+      if (m[1] != null) { const b = document.createElement('strong'); appendTextWithTimestamps(b, m[1]); parent.appendChild(b); }
+      else if (m[2] != null) { const c = document.createElement('code'); c.textContent = m[2]; parent.appendChild(c); }
+      else if (m[3] != null) { const it = document.createElement('em'); appendTextWithTimestamps(it, m[3]); parent.appendChild(it); }
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) appendTextWithTimestamps(parent, text.slice(last));
+  }
+
+  // Render an assistant answer as light Markdown: paragraphs, bullet/numbered
+  // lists, and headings, with inline formatting + timestamp chips. Safe by
+  // construction (DOM nodes, no innerHTML).
+  function renderRichAnswer(el, text) {
+    el.textContent = '';
+    el.classList.add('ask-rich');
+    const blocks = String(text).replace(/\r/g, '').split(/\n{2,}/);
+    for (const block of blocks) {
+      if (!block.trim()) continue;
+      const lines = block.split('\n');
+      const isUl = lines.every((l) => /^\s*[-*]\s+/.test(l));
+      const isOl = lines.every((l) => /^\s*\d+\.\s+/.test(l));
+      if (isUl || isOl) {
+        const list = document.createElement(isOl ? 'ol' : 'ul');
+        for (const l of lines) {
+          const li = document.createElement('li');
+          appendInline(li, l.replace(/^\s*(?:[-*]|\d+\.)\s+/, ''));
+          list.appendChild(li);
+        }
+        el.appendChild(list);
+        continue;
+      }
+      const h = lines.length === 1 && block.match(/^#{1,6}\s+(.*)$/);
+      if (h) {
+        const head = document.createElement('div');
+        head.className = 'ask-h';
+        appendInline(head, h[1]);
+        el.appendChild(head);
+        continue;
+      }
+      const p = document.createElement('div');
+      p.className = 'ask-p';
+      lines.forEach((l, i) => { if (i) p.appendChild(document.createElement('br')); appendInline(p, l); });
+      el.appendChild(p);
+    }
   }
 
   function renderSearchResults(root, cues, query) {
@@ -1124,8 +1215,10 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     log.scrollTop = log.scrollHeight;
   }
 
-  async function loadAskCues() {
-    if (!askCuesPromise) askCuesPromise = getCues(() => {}, undefined).catch((e) => { askCuesPromise = null; throw e; });
+  async function loadAskCues(onProgress) {
+    if (!askCuesPromise) {
+      askCuesPromise = getCues(onProgress || (() => {}), undefined).catch((e) => { askCuesPromise = null; throw e; });
+    }
     return askCuesPromise;
   }
 
@@ -1148,8 +1241,9 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
   function streamAnswer(handles, cfg, question, cues) {
     const contextText = ChatLib.buildContext(cues, question, cfg.budget);
     const bubble = appendMsg(handles.root, 'assistant', '');
-    bubble.textContent = '…';
+    bubble.textContent = 'Analyzing the transcript…';
     let answer = '';
+    let settled = false;
     let port;
     try { port = chrome.runtime.connect({ name: 'chat' }); }
     catch (_) { bubble.className = 'ask-msg error'; bubble.textContent = 'Extension messaging unavailable — reload the page.'; return; }
@@ -1170,19 +1264,22 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
         answer += m.text; bubble.textContent = answer;
         handles.log.scrollTop = handles.log.scrollHeight;
       } else if (m.type === 'done') {
+        settled = true;
         askHistory.push({ role: 'user', content: question }, { role: 'assistant', content: answer });
         if (askHistory.length > 12) askHistory = askHistory.slice(-12);
-        if (answer) linkifyTimestamps(bubble, answer);
+        if (answer) renderRichAnswer(bubble, answer);
+        else { bubble.className = 'ask-msg system'; bubble.textContent = 'No answer returned.'; }
         stopStreaming();
         port.disconnect();
       } else if (m.type === 'error') {
+        settled = true;
         bubble.className = 'ask-msg error'; bubble.textContent = m.message;
         stopStreaming();
         port.disconnect();
       }
     });
     port.onDisconnect.addListener(() => {
-      if (bubble.textContent === '…') { bubble.className = 'ask-msg error'; bubble.textContent = 'Connection closed.'; }
+      if (!settled && !answer) { bubble.className = 'ask-msg error'; bubble.textContent = 'Connection closed.'; }
       stopStreaming();
     });
     port.postMessage({ question, contextText, history: askHistory });
@@ -1190,9 +1287,16 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
 
   async function handleAsk(handles, query) {
     appendMsg(handles.root, 'user', query);
+    const loading = appendMsg(handles.root, 'system', 'Understanding the meeting — reading the transcript…');
     let cues;
-    try { cues = await loadAskCues(); }
-    catch (_) { appendMsg(handles.root, 'error', 'Could not read the transcript. Open the transcript panel (CC) first.'); return; }
+    try {
+      cues = await loadAskCues((done, total, text) => { loading.textContent = text || 'Reading the transcript…'; });
+    } catch (_) {
+      loading.remove();
+      appendMsg(handles.root, 'error', 'Could not read the transcript. Open the transcript panel (CC) first.');
+      return;
+    }
+    loading.remove();
     const cfg = await getProviderConfig();
     if (!cfg) { renderSearchResults(handles.root, cues, query); return; }
     if (!(await askConsent(cfg.host))) {
