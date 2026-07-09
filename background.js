@@ -17,16 +17,23 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 async function handleChat(port, msg) {
-  let cfg, apiKey;
+  let cfg, apiKey, consented;
   try {
-    const store = await chrome.storage.local.get(['aiProvider', 'aiApiKey']);
+    const store = await chrome.storage.local.get(['aiProvider', 'aiApiKey', 'aiConsented']);
     cfg = store.aiProvider;
     apiKey = store.aiApiKey;
+    consented = store.aiConsented;
   } catch (e) {
     return post(port, { type: 'error', message: 'Could not read settings.' });
   }
   if (!cfg || !cfg.connected || !apiKey) {
     return post(port, { type: 'error', message: 'No provider connected. Open Settings to connect one.' });
+  }
+  // Defense in depth: never send transcript text without the user's recorded
+  // consent, even if some future caller opens the port directly. The panel sets
+  // this only after the consent dialog (content.js askConsent).
+  if (!consented) {
+    return post(port, { type: 'error', message: 'Consent required — ask again from the panel.' });
   }
   const has = await chrome.permissions.contains({ origins: [cfg.host + '/*'] });
   if (!has) {
