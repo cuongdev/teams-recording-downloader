@@ -59,7 +59,12 @@
     for (const h of hits) {
       for (const j of [h.index, h.index - 1, h.index + 1]) {
         if (j < 0 || j >= cues.length || keep.has(j)) continue;
-        const len = lineOf(cues[j]).length + 1;
+        // +1 for this line's own '\n' join, +2 reserved for a possible '…\n'
+        // gap separator the assembly loop below may insert before it. The
+        // number of gaps is always < the number of kept lines, so reserving
+        // 2 per line is a safe upper bound — guarantees the assembled
+        // output never exceeds `budget` even with multiple disjoint clusters.
+        const len = lineOf(cues[j]).length + 3;
         if (size + len > budget) continue;
         keep.add(j);
         size += len;

@@ -23,8 +23,16 @@ test('searchCues finds every cue containing a term', () => {
 });
 
 test('searchCues boosts an exact phrase match to the top', () => {
-  const r = ChatLib.searchCues(cues, 'billing page');
-  assert.equal(r[0].cue.pos, 3);
+  // Both cues cover the same query terms with equal frequency (score 2.2
+  // each without the phrase bonus), and the phrase-containing cue sits at
+  // the LATER index. Without the +3 phrase bonus the tie breaks to the
+  // earlier index (pos 1), so this fails if the bonus is ever removed.
+  const phraseCues = [
+    { pos: 1, speaker: 'Alice', start: 0, end: 5, text: 'The page about billing needs review.' },
+    { pos: 2, speaker: 'Bob', start: 5, end: 10, text: 'Let us finalize the billing page today.' },
+  ];
+  const r = ChatLib.searchCues(phraseCues, 'billing page');
+  assert.equal(r[0].cue.pos, 2);
 });
 
 test('buildContext returns the full transcript when under budget', () => {
@@ -37,6 +45,33 @@ test('buildContext retrieves the relevant passage when over budget', () => {
   const ctx = ChatLib.buildContext(cues, 'billing', 60); // smaller than full transcript
   assert.ok(ctx.includes('billing'));
   assert.ok(ctx.length <= 60);
+});
+
+test('buildContext stays within budget across disjoint clusters', () => {
+  // Two matching cues far apart in the transcript, everything else is
+  // non-matching filler long enough to never be pulled in as a "neighbor"
+  // line. This mirrors the original bug: the assembly loop inserts an
+  // uncounted '…' separator between the two clusters, which used to let
+  // the result exceed `budget` (the original repro used budget=31 and
+  // returned a 32-char result). The fixed reservation accounting is a
+  // provable-safe upper bound rather than an exact one, so it needs a
+  // little more headroom than the true minimum to admit both clusters —
+  // 35 is that headroom-inclusive minimum for this fixture; below it the
+  // fix conservatively (and still safely) keeps only one cluster.
+  const manyCues = [];
+  for (let i = 0; i < 16; i++) {
+    manyCues.push({
+      pos: i,
+      speaker: 'S',
+      start: i,
+      end: i + 1,
+      text: (i === 2 || i === 15) ? 'target' : 'this is unrelated padding text here',
+    });
+  }
+  const budget = 35;
+  const ctx = ChatLib.buildContext(manyCues, 'target', budget);
+  assert.ok(ctx.includes('…'));
+  assert.ok(ctx.length <= budget);
 });
 
 test('parseSSE extracts delta tokens and detects [DONE]', () => {
@@ -67,7 +102,12 @@ test('buildChatRequest assembles system + history + question', () => {
   );
   assert.equal(req.model, 'gpt-4o-mini');
   assert.equal(req.stream, true);
+  assert.equal(req.messages.length, 4);
   assert.equal(req.messages[0].role, 'system');
   assert.ok(req.messages[0].content.includes('transcript text'));
+  assert.equal(req.messages[1].role, 'user');
+  assert.equal(req.messages[1].content, 'hi');
+  assert.equal(req.messages[2].role, 'assistant');
+  assert.equal(req.messages[2].content, 'hello');
   assert.equal(req.messages[req.messages.length - 1].content, 'Who mentioned login?');
 });
