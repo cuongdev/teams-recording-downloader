@@ -4,6 +4,7 @@
          "128": "icons/team_lit.png"
       }
    },
+   "background": { "service_worker": "background.js" },
    "content_scripts": [ {
       "all_frames": true,
       "js": [ "intercept.js" ],
