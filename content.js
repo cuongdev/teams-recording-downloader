@@ -1023,6 +1023,13 @@ button.copy{background:var(--accent);color:#062b1e;border:0;padding:10px 16px;bo
     form.appendChild(input); form.appendChild(sendBtn);
 
     panel.appendChild(bar); panel.appendChild(lock); panel.appendChild(log); panel.appendChild(form);
+    // Teams/SharePoint register single-key global shortcuts on document (e.g.
+    // "s" opens Share). Keep the panel's keystrokes local so typing in the
+    // input never triggers a host-page shortcut. stopPropagation (not
+    // preventDefault) — the input still receives characters and Enter still
+    // submits the form.
+    ['keydown', 'keyup', 'keypress'].forEach((evt) =>
+      panel.addEventListener(evt, (e) => { e.stopPropagation(); }));
     root.appendChild(panel);
     document.documentElement.appendChild(host);
 
