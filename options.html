@@ -16,6 +16,9 @@
     .notice { background: #fff6e5; border: 1px solid #f0d089; border-radius: 8px; padding: 12px 14px; margin-top: 20px; font-size: 13px; }
     .status { margin-top: 14px; min-height: 20px; font-size: 13px; }
     .ok { color: #2f6f4f; } .err { color: #b3352f; }
+    .modelrow { display: flex; gap: 10px; margin-top: 8px; align-items: center; }
+    .modelrow select { flex: 1; box-sizing: border-box; padding: 8px 10px; border: 1px solid #c7c7cc; border-radius: 8px; font: inherit; }
+    #loadModels { background: #eee; color: #1b1b1f; white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -30,6 +33,10 @@
 
   <label for="model">Model</label>
   <input id="model" type="text" placeholder="gpt-4o-mini" autocomplete="off">
+  <div class="modelrow">
+    <button id="loadModels" type="button">Load models</button>
+    <select id="modelPicker" style="display:none" aria-label="Pick a model"></select>
+  </div>
 
   <label for="budget">Transcript budget (characters sent per question)</label>
   <input id="budget" type="number" min="4000" step="1000" value="48000">
@@ -49,6 +56,7 @@
     keyword search and sends nothing.
   </div>
 
+  <script src="chat-lib.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

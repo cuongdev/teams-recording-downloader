@@ -111,3 +111,19 @@ test('buildChatRequest assembles system + history + question', () => {
   assert.equal(req.messages[2].content, 'hello');
   assert.equal(req.messages[req.messages.length - 1].content, 'Who mentioned login?');
 });
+
+test('parseModelList reads OpenAI {data:[{id}]} shape, deduped and sorted', () => {
+  const json = { object: 'list', data: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }, { id: 'gpt-4o' }] };
+  assert.deepEqual(ChatLib.parseModelList(json), ['gpt-4o', 'gpt-4o-mini']);
+});
+
+test('parseModelList accepts a bare array and array of strings', () => {
+  assert.deepEqual(ChatLib.parseModelList([{ id: 'b' }, { id: 'a' }]), ['a', 'b']);
+  assert.deepEqual(ChatLib.parseModelList(['m2', 'm1']), ['m1', 'm2']);
+});
+
+test('parseModelList returns [] for malformed input', () => {
+  assert.deepEqual(ChatLib.parseModelList(null), []);
+  assert.deepEqual(ChatLib.parseModelList({}), []);
+  assert.deepEqual(ChatLib.parseModelList({ data: [{ name: 'no-id' }, 5, null] }), []);
+});

@@ -96,6 +96,51 @@ async function test() {
   }
 }
 
+// Fetch the provider's model list (OpenAI-compatible GET /models) so the user
+// can pick from a dropdown instead of typing. Runs in the options page directly
+// (extension context); requests the host permission on the fly if needed.
+async function loadModels() {
+  const cfg = readForm();
+  if (!cfg.host) return setStatus('Enter a valid Base URL first.', false);
+  if (!isAllowedOrigin(cfg.baseUrl)) {
+    return setStatus('Use an https URL (http is only allowed for localhost).', false);
+  }
+  if (!cfg.apiKey) return setStatus('Enter an API key first.', false);
+  let has = await chrome.permissions.contains({ origins: [cfg.host + '/*'] });
+  if (!has) {
+    try { has = await chrome.permissions.request({ origins: [cfg.host + '/*'] }); }
+    catch (e) { return setStatus('Permission request failed: ' + e.message, false); }
+  }
+  if (!has) return setStatus('Host permission denied — cannot list models.', false);
+  setStatus('Loading models…', true);
+  let resp;
+  try {
+    resp = await fetch(cfg.baseUrl + '/models', { headers: { Authorization: 'Bearer ' + cfg.apiKey } });
+  } catch (e) {
+    return setStatus('Request failed: ' + e.message + ' — enter the model name manually.', false);
+  }
+  if (!resp.ok) {
+    return setStatus('Endpoint returned HTTP ' + resp.status + ' for /models — enter the model name manually.', false);
+  }
+  let ids;
+  try { ids = ChatLib.parseModelList(await resp.json()); }
+  catch (_) { ids = []; }
+  if (!ids.length) return setStatus('No models returned — enter the model name manually.', false);
+  const picker = $('modelPicker');
+  picker.textContent = '';
+  for (const id of ids) {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = id;
+    picker.appendChild(opt);
+  }
+  const current = $('model').value.trim();
+  if (current && ids.indexOf(current) !== -1) picker.value = current;
+  else $('model').value = picker.value; // default to the first model
+  picker.style.display = '';
+  setStatus('Loaded ' + ids.length + ' models — pick one below.', true);
+}
+
 async function disconnect() {
   const { aiProvider } = await chrome.storage.local.get('aiProvider');
   if (aiProvider && aiProvider.host) {
@@ -109,4 +154,6 @@ async function disconnect() {
 $('save').addEventListener('click', save);
 $('test').addEventListener('click', test);
 $('disconnect').addEventListener('click', disconnect);
+$('loadModels').addEventListener('click', loadModels);
+$('modelPicker').addEventListener('change', () => { $('model').value = $('modelPicker').value; });
 load();

@@ -112,5 +112,17 @@
     return { model, messages, stream: true };
   }
 
-  return { tokenize, searchCues, cuesToPlainText, buildContext, parseSSE, buildChatRequest };
+  // Extract model ids from an OpenAI-compatible GET /models response. Accepts
+  // `{data:[{id}]}`, a bare array, or an array of strings. Deduped + sorted.
+  function parseModelList(json) {
+    const arr = json && Array.isArray(json.data) ? json.data : (Array.isArray(json) ? json : []);
+    const ids = [];
+    for (const m of arr) {
+      const id = typeof m === 'string' ? m : (m && m.id);
+      if (typeof id === 'string' && id) ids.push(id);
+    }
+    return [...new Set(ids)].sort();
+  }
+
+  return { tokenize, searchCues, cuesToPlainText, buildContext, parseSSE, buildChatRequest, parseModelList };
 });
